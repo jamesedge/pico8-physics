@@ -6,11 +6,11 @@ This is an implementation of a constraint solver for rigid body physics in pico8
 
 All physics objects (rigid bodies) are managed within a scene object. The following code can be used to create a scene, and add some rigid bodies.
 
-'''
+```
 myscene = scene{ size=15 }
 floor = myscene.add_body{ x=0, y=-4, mass=0, moi=0, verts=rectangle(10, 1) }
 box = myscene.add_body{ x=0, y=4, mass=1, verts=rectangle(1, 1) }
-'''
+```
 
 
 
