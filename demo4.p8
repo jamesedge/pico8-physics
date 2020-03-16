@@ -84,8 +84,6 @@ function _draw()
 
   if state==0 then spr(anim*2, x-8, y-8, 2, 2, band(state, 0x02)>0)
   else
-    --printh(band(state, 0x10))
-
     if band(state, 0x04)>0 then spr(96+anim*2, x-8, y-8, 2, 2, band(state, 0x02)>0)
     elseif band(state, 0x08)>0 then spr(128+anim*2, x-8, y-8, 2, 2, band(state, 0x02)>0)
     elseif band(state, 0x10)>0 then spr(64+anim*2, x-8, y-8, 2, 2, band(state, 0x02)>0)
