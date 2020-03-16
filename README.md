@@ -28,6 +28,7 @@ function _draw()
   myscene.draw(vp)
 end
 ```
+Several demos have been included to show how to use the code.
 
 ## links
 
