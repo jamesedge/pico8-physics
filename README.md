@@ -32,5 +32,5 @@ Several demos have been included to show how to use the code.
 
 ## links
 
-[pico-8 fantasy console](https://www.lexaloffle.com/pico-8.php)
-[box2d](https://box2d.org/)
+- [pico-8 fantasy console](https://www.lexaloffle.com/pico-8.php)
+- [Erin Catto's box2d](https://box2d.org/)
