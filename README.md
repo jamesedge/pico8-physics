@@ -20,7 +20,14 @@ function _update60()
   myscene.update()
 end
 ```
-As units in the 
+As units are stored in SI units in the scene, a viewport object can be created to transform these to screen space pixel units. Scene also has a draw method which will display the colliders given a viewport object.
+```
+function _draw()
+  cls()
+  vp = viewport{ scale=16 }
+  myscene.draw(vp)
+end
+```
 
 ## Links
 
