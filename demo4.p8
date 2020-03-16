@@ -39,6 +39,7 @@ function _update60()
   if (btnp(5)) collide = not collide
 end
 
+-- adapted from @freds72 code
 function rspr(sx,sy,x,y,a,w)
     local ca,sa=cosine(a),sine(a)
     local srcx,srcy,addr,pixel_pair
@@ -55,8 +56,6 @@ function rspr(sx,sy,x,y,a,w)
             if band(bor(srcx,srcy),mask)==0 then
                 local c=sget(sx+srcx,sy+srcy)
                 if (c>0) pset(x+ix,y+iy,c)
-            --else
-                --pset(x+ix,y+iy,rspr_clear_col)
             end
             srcx-=ddy0
             srcy+=ddx0
