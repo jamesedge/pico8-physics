@@ -31,7 +31,7 @@ function _init()
   --vp.translate(16, 0)
   s.add_body{ x=0, y=-3.5, mass=0, moi=0, rest=0.0, verts=rectangle(8, 1) }
 
-  for i=0,5 do
+  for i=0,6 do
     s.add_body{ x=-1.5, y=i-2.5, listener=listener }
     s.add_body{ x=0, y=i-2.5, listener=listener }
     s.add_body{ x=1.5, y=i-2.5, listener=listener }
