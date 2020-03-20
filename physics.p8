@@ -7,45 +7,6 @@ core physics code
 ]]
 
 -->8
--- object pooling
-
-function object(pool, id)
-  local self
-  self = {
-    id=function() return id end,
-    free=function()
-      self.destroy()
-      pool.release(self)
-    end,
-    destroy=function() end
-  }
-  return self
-end
-
-function object_pool(name, type)
-  local count, used, objects, free_objects, self = 0, 0, {}, {}
-  self = {
-    new=function()
-      local id = next(free_objects)
-      if id then
-        free_objects[id] = nil
-      else
-        id = #objects+1
-        objects[id] = type(self, id)
-        count += 1
-      end
-      used += 1
-      return objects[id]
-    end,
-    release=function(obj)
-      free_objects[obj.id()] = true
-      used -= 1
-    end
-  }
-  return self
-end
-
--->8
 -- aabb
 
 function aabb(x1, y1, x2, y2)
@@ -128,11 +89,11 @@ function scene(args)
   args = args or {}
 
   local size = args.size or 10
-  local g, slop, damp, isteps, sframes, beta, cmanager, box =
+  local g, slop, damp, isteps, sframes, beta, cmanager, box, constraints =
     args.g or -9.8, args.slop or 0x0.08, args.damp or 1, args.isteps or 4, args.sframes or 100, args.beta or 0.2,
-    sweep_and_prune(), aabb(-size, -size, size, size)
+    sweep_and_prune(), aabb(-size, -size, size, size), {}
   local nextid, alive, dead, awake, dynamic, x, y, a, vx, vy, va, mass, imass, imoi,
-    geom, layer, collide, rest, frict, contact_ids, listeners,
+    geom, layer, rest, frict, contact_ids, listeners,
     island, island_vx, island_vy, island_va, island_count, island_sframes =
     1, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
 
@@ -152,7 +113,6 @@ function scene(args)
   ]]
   local function remove_body(id)
     send_message{ id=id, event=0x05 }
-    geom[id].free()
     alive[id], dead[id], geom[id], listeners[id] = nil, true, nil, nil
     for cid in pairs(contact_ids) do -- remove contact ids
       if (id==shr(band(cid, 0xff00), 8) or id==band(cid, 0xff)) contact_ids[cid] = nil
@@ -215,82 +175,68 @@ function scene(args)
   end
 
   -- contact solver object pool
-  local contact = object_pool('contact', function(pool, id)
-    local self = object(pool, id)
+  local function contact(id1, id2, nx, ny)
+    local lambdan, lambdat, r, f,
+      jn1, jn2, jn3, jn4, jn5, jn6, jmn, b,
+      jt1, jt2, jt3, jt4, jt5, jt6, jmt =
+      0, 0, 0.5*(rest[id1]+rest[id2]), sqrt(frict[id1]*frict[id2])
 
-    local lambdan, id1, id2, jn1, jn2, jn3, jn4, jn5, jn6, ijmn, b,
-          lambdat, jt1, jt2, jt3, jt4, jt5, jt6, ijmt, nx, ny, r, f,
-          rx1, ry1, rx2, ry2
+    return {
+      eval=function(dt, dist, px1, py1, px2, py2)
+        local rx1, ry1, rx2, ry2, vx1, vy1, va1, vx2, vy2, va2, imass1, imoi1, imass2, imoi2 =
+          zero(px1-x[id1]), zero(py1-y[id1]), zero(px2-x[id2]), zero(py2-y[id2]),
+          vx[id1], vy[id1], va[id1], vx[id2], vy[id2], va[id2],
+          imass[id1], imoi[id1], imass[id2], imoi[id2]
 
-    function self.init(idx1, idx2, nrmx, nrmy)
-      id1, id2 = idx1, idx2
-      lambdan, lambdat, nx, ny, r, f =
-        0, 0, nrmx, nrmy, 0.5*(rest[id1]+rest[id2]), sqrt(frict[id1]*frict[id2])
-      return self
-    end
+        jn1, jn2, jn3, jn4, jn5, jn6 =
+          nx, ny, rx1*ny-ry1*nx, -nx, -ny, -(rx2*ny-ry2*nx)
 
-    function self.eval(dt, dist, px1, py1, px2, py2)
-      local x1, y1, x2, y2 = x[id1], y[id1], x[id2], y[id2]
-      rx1, ry1, rx2, ry2 = zero(px1-x1), zero(py1-y1), zero(px2-x2), zero(py2-y2)
-      local vx1, vy1, va1, vx2, vy2, va2 = vx[id1], vy[id1], va[id1], vx[id2], vy[id2], va[id2]
-      local imass1, imoi1, imass2, imoi2 = imass[id1], imoi[id1], imass[id2], imoi[id2]
+        if (jn1*vx1+jn2*vy1+jn3*va1+jn4*vx2+jn5*vy2+jn6*va2>=0) return false
 
-      jn1, jn2, jn3, jn4, jn5, jn6 =
-        nx, ny, zero(rx1*ny-ry1*nx), -nx, -ny, zero(-(rx2*ny-ry2*nx))
+        -- warmstart
+        if abs(lambdan)+abs(lambdat)>0 then
+          local px, py = nx*lambdan-ny*lambdat, ny*lambdan+nx*lambdat
+          vx1, vy1, va1 = apply_impulse(id1, px, py, rx1*py-ry1*px)
+          vx2, vy2, va2 = apply_impulse(id2, -px, -py, -(rx2*py-ry2*px))
+        end
 
-      if (jn1*vx1+jn2*vy1+jn3*va1+jn4*vx2+jn5*vy2+jn6*va2>=0) return nil
+        jmn, b = (jn1*imass1*jn1+jn2*imass1*jn2+jn3*imoi1*jn3+
+                     jn4*imass2*jn4+jn5*imass2*jn5+jn6*imoi2*jn6),
+                  -(beta/dt)*dist+r*min(0, ((vx1-py1*va1)-(vx2-py2*va2))*nx+
+                                           ((vy1+px1*va1)-(vy2-px2*va2))*ny)
 
-      -- warmstart
-      if abs(lambdan)+abs(lambdat)>0 then
-        local px, py = nx*lambdan-ny*lambdat, ny*lambdan+nx*lambdat
-        vx1, vy1, va1 = apply_impulse(id1, px, py, rx1*py-ry1*px)
-        vx2, vy2, va2 = apply_impulse(id2, -px, -py, -(rx2*py-ry2*px))
+        jt1, jt2, jt3, jt4, jt5, jt6 =
+          -ny, nx, rx1*nx+ry1*ny, ny, -nx, -(rx2*nx+ry2*ny)
+        jmt = (jt1*imass1*jt1+jt2*imass1*jt2+jt3*imoi1*jt3+
+                  jt4*imass2*jt4+jt5*imass2*jt5+jt6*imoi2*jt6)
+
+        return true
+      end,
+      solve=function()
+        local vx1, vy1, va1, vx2, vy2, va2 =
+          vx[id1], vy[id1], va[id1], vx[id2], vy[id2], va[id2]
+
+        local deln, delt = -(jn1*vx1+jn2*vy1+jn3*va1+jn4*vx2+jn5*vy2+jn6*va2+b)/jmn,
+                           -(jt1*vx1+jt2*vy1+jt3*va1+jt4*vx2+jt5*vy2+jt6*va2)/jmt
+
+        local tmp = lambdan
+        lambdan = max(lambdan+deln, 0)
+        deln = lambdan-tmp
+
+        local impn = f*lambdan
+        tmp = lambdat
+        lambdat = mid(-impn, tmp+delt, impn)
+        delt = lambdat-tmp
+
+        apply_impulse(id1, deln*jn1+delt*jt1, deln*jn2+delt*jt2, deln*jn3+delt*jt3)
+        apply_impulse(id2, deln*jn4+delt*jt4, deln*jn5+delt*jt5, deln*jn6+delt*jt6)
+
+        return deln*deln+delt*delt>0x0.001
       end
+    }
+  end
 
-      local relvx, relvy = (vx1-py1*va1)-(vx2-py2*va2), (vy1+px1*va1)-(vy2-px2*va2)
-      ijmn, b = 1/(jn1*imass1*jn1+jn2*imass1*jn2+jn3*imoi1*jn3+
-                   jn4*imass2*jn4+jn5*imass2*jn5+jn6*imoi2*jn6),
-                -(beta/dt)*dist+r*min(0, relvx*nx+relvy*ny)
-
-      jt1, jt2, jt3, jt4, jt5, jt6 =
-        -ny, nx, (rx1*nx+ry1*ny), ny, -nx, -(rx2*nx+ry2*ny)
-      ijmt = 1/(jt1*imass1*jt1+jt2*imass1*jt2+jt3*imoi1*jt3+
-                jt4*imass2*jt4+jt5*imass2*jt5+jt6*imoi2*jt6)
-
-      local ca, sa = cosine(-a[id1]), sine(-a[id1])
-      rx1, ry1 = rx1*ca-ry1*sa, rx1*sa+ry1*ca
-      ca, sa = cosine(-a[id2]), sine(-a[id2])
-      rx2, ry2 = rx2*ca-ry2*sa, rx2*sa+ry2*ca
-
-      return self
-    end
-
-    function self.solve()
-      local vx1, vy1, va1, vx2, vy2, va2 =
-        vx[id1], vy[id1], va[id1], vx[id2], vy[id2], va[id2]
-
-      local deln, delt = -(jn1*vx1+jn2*vy1+jn3*va1+jn4*vx2+jn5*vy2+jn6*va2+b)*ijmn,
-                         -(jt1*vx1+jt2*vy1+jt3*va1+jt4*vx2+jt5*vy2+jt6*va2)*ijmt
-
-      local tmp = lambdan
-      lambdan = max(lambdan+deln, 0)
-      deln = lambdan-tmp
-
-      local impn = f*lambdan
-      tmp = lambdat
-      lambdat = mid(-impn, tmp+delt, impn)
-      delt = lambdat-tmp
-
-      apply_impulse(id1, deln*jn1+delt*jt1, deln*jn2+delt*jt2, deln*jn3+delt*jt3)
-      apply_impulse(id2, deln*jn4+delt*jt4, deln*jn5+delt*jt5, deln*jn6+delt*jt6)
-
-      return deln*deln+delt*delt>0x0.001
-    end
-
-    return self
-  end)
-
-  local contacts, prev_contacts, constr = {}, {}, {}
+  local contacts, prev_contacts = {}, {}
 
   return {
     --[[
@@ -303,7 +249,6 @@ function scene(args)
     rest - restitution
     frict - friction
     layer - which layer/layers the object is present in
-    collides - which layers the object collides with
     verts - table containing geometry
     listener - table containing an on_event(args) method for events
     ]]
@@ -314,7 +259,7 @@ function scene(args)
       if (id) dead[id] = nil else id = nextid nextid += 1
 
       local verts = args.verts and args.verts or rectangle(1, 1)
-      mass[id], geom[id] = args.mass or 1, geometry.new().init(verts.numv, verts.x, verts.y)
+      mass[id], geom[id] = args.mass or 1, geometry(verts.numv, verts.x, verts.y)
       local moi = args.moi
 
       if not moi then
@@ -333,14 +278,12 @@ function scene(args)
 
       alive[id], awake[id], island[id], island_sframes[id],
         x[id], y[id], a[id], vx[id], vy[id], va[id],
-        imass[id], imoi[id],
-        layer[id], collide[id],
-        rest[id], frict[id], listeners[id] =
+        imass[id], imoi[id], layer[id], rest[id], frict[id], listeners[id] =
         true, dynamic[id] or nil, id, 0,
         args.x or 0, args.y or 0, args.a or 0, 0, 0, 0,
         mass[id]>0 and 1/mass[id] or 0, moi>0 and 1/moi or 0,
-        args.layer or 1, args.collide or 255,
-        args.rest or 0.1, args.frict or 1, args.listener or nil
+        args.layer or 255, args.rest or 0.1, args.frict or 1,
+        args.listener or nil
 
       geom[id].transform(x[id], y[id], a[id])
       cmanager.add_body(id, geom[id].aabb())
@@ -352,6 +295,7 @@ function scene(args)
     velocity=function(id) return vx[id], vy[id], va[id] end, -- returns velocity of a body
     inv_mass=function(id) return imass[id], imoi[id] end, -- returns inverse mass/inertia of a body
     is_dynamic=function(id) return dynamic[id] end, -- returns true if the body reacts to forces
+    add_constraint=function(c) constraints[#constraints+1] = c end,
     apply_force=apply_force,
     apply_impulse=apply_impulse,
     update=function(dt) -- update function called once per frame
@@ -370,35 +314,37 @@ function scene(args)
       end
 
       -- compute contacts, create solvers (including warmstarting)
+      local solvers, id1, id2, cid, rid, dist, nx, ny, x1, y1, x2, y2 = {}
+
+      for _,c in pairs(constraints) do if(c.eval(dt)) solvers[#solvers+1] = c end
+
       contacts, prev_contacts = prev_contacts, contacts
-      local id1, id2, cid, rid, dist, nx, ny, x1, y1, x2, y2
       while cmanager.has_more() do
         id1, id2 = cmanager.next()
-        if is_awake(id1) or is_awake(id2) then
+        if band(layer[id1], layer[id2])>0 and (is_awake(id1) or is_awake(id2)) then
           rid, dist, nx, ny, x1, y1, x2, y2 = geom[id1].collides(geom[id2])
           if rid then
-            wake(id1)
-            wake(id2)
+            wake(id1) wake(id2)
             if (dynamic[id1] and dynamic[id2]) union(id1, id2)
             cid = shl(id1, 8)+id2+shr(rid, 16)
             contacts[cid], prev_contacts[cid] = prev_contacts[cid], nil
             if dist>slop then
               if not contacts[cid] then
-                contacts[cid] = contact.new().init(id1, id2, nx, ny)
+                contacts[cid] = contact(id1, id2, nx, ny)
                 if not contact_ids[cid] then
                   contact_ids[cid] = true
                   send_message{ id=id1, event=0x01, cid=cid, body=id2, x=x1, y=y1, nx=nx, ny=ny }
                   send_message{ id=id2, event=0x01, cid=cid, body=id1, x=x2, y=y2, nx=-nx, ny=-ny }
                 end
               end
-              constr[#constr+1] = contacts[cid].eval(dt, dist-slop, x1, y1, x2, y2)
+              solvers[#solvers+1] = contacts[cid].eval(dt, dist-slop, x1, y1, x2, y2) and contacts[cid] or nil
             end
           end
         end
       end
 
       -- free all old contacts
-      for cid,c in pairs(prev_contacts) do c.free()
+      for cid,c in pairs(prev_contacts) do
         id1, id2 = shr(band(cid, 0xff00), 8), band(cid, 0xff)
         if is_awake(id1) or is_awake(id2) then
           contact_ids[cid] = nil
@@ -409,15 +355,10 @@ function scene(args)
       end
 
       -- solve all constraints
-      local active
       for i=1,isteps do
-        active = 0
-        for j,c in pairs(constr) do if (c.solve()) active+=1 else constr[j] = nil end
-        if (active==0) break -- if no constraints remain end early
+        for j,s in pairs(solvers) do if (not s.solve()) solvers[j] = nil end
+        if (#solvers==0) break -- if no constraints remain end early
       end
-
-      -- free references to constraints
-      for i in pairs(constr) do constr[i] = nil end
 
       -- integrate velocities, transform bodies, compute island information
       -- remove bodies outside of simulation area
@@ -456,7 +397,8 @@ function scene(args)
         color(island[id]%7+8)
 
         local cx, cy = vp.to_screen(x[id], y[id])
-        local upx, upy = -2*sine(a[id]), -2*cosine(a[id])
+        local upy, upx = cos_sin(a[id])
+        upx *= 2 upy *= 2
         line(cx-upx, cy-upy, cx+upx, cy+upy)
         line(cx-upy, cy+upx, cx+upy, cy-upx)
 
@@ -479,9 +421,10 @@ ox, oy - offset
 ]]
 function ngon(r, nv, sx, sy, ox, oy)
   ox, oy, sx, sy = ox or 0, oy or 0, r*(sx or 1), r*(sy or 1)
-  local x, y, angle, da = {}, {}, (nv==4) and 0.25*0x3.243f or 0, -0x6.487e/nv
+  local x, y, angle, da, ca, sa = {}, {}, (nv==4) and 0.25*0x3.243f or 0, -0x6.487e/nv
   for i=1,nv do
-    x[i], y[i] = sx*cosine(angle)+ox, sy*sine(angle)+oy
+    x[i], y[i] = cos_sin(angle)
+    x[i], y[i] = x[i]*sx+ox, y[i]*sy+oy
     angle += da
   end
   return { numv=nv, x=x, y=y }
