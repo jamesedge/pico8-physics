@@ -3,7 +3,7 @@ version 18
 __lua__
 -- character controller
 --[[
-this code demonstrates how to set up a dynamic character controller 
+this code demonstrates how to set up a dynamic character controller
 ]]
 
 -->8
@@ -51,7 +51,9 @@ function charcontroller(scene, args)
     local vx, vy = scene.velocity(bodyid)
     if is_grounded() then jump_count=1 scene.apply_impulse(bodyid, 0, jump_speed, 0)
     elseif is_hanging() then
-      local dx, dy = v2nrm(directions[2]>0 and -0.3 or 0.3, 0.6)
+      local dx, dy = directions[2]>0 and -0.3 or 0.3, 0.6
+      local len = sqrt(dx*dx+dy*dy)
+      dx /= len dy /= len
       jump_count += 1
       scene.apply_impulse(bodyid, dx*jump_speed, dy*jump_speed, 0)
     elseif vy<=0 and jump_count<2 then
