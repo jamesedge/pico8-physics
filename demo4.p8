@@ -41,7 +41,7 @@ end
 
 -- adapted from @freds72 code
 function rspr(sx,sy,x,y,a,w)
-    local ca,sa=cosine(a),sine(a)
+    local ca,sa=cos_sin(a)
     local srcx,srcy,addr,pixel_pair
     local ddx0,ddy0=ca,sa
     local mask=shl(0xfff8,(w-1))
