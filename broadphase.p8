@@ -11,21 +11,21 @@ broadphase collision detection using sweep and prune with axis aligned bounding 
 
 function sweep_and_prune()
   local nump, x_id, y_id, x_val, y_val, x_minmax, y_minmax, x_spans, y_spans, count, cand, iter =
-    2, { -1, -1 }, { -1, -1 }, { 0x8000, 0x7fff }, { 0x8000, 0x7fff },
-    { 0, 1 }, { 0, 1 }, {}, {}, {}, {}, nil
+    2, { -1, -1 }, { -1, -1 }, { 0x8000, 0x7fff }, { 0x8000, 0x7fff }, { 0, 1 }, { 0, 1 }, {}, {}, {}, {}
 
   return {
     add_body=function(id, box)
       local function insert(len, ids, vals, minmaxs, spans, id, val, minmax)
         ids[len+1], vals[len+1], minmaxs[len+1] = ids[len], vals[len], minmaxs[len]
-        local idx, prev_id, cid = len
+        local idx, prev_id, cid, pidx = len
         while vals[idx-1]>val do
-          prev_id = ids[idx-1]
+          pidx = idx-1
+          prev_id = ids[pidx]
           cid = shl(min(id, prev_id), 8)+max(id, prev_id)
-          count[cid] = (count[cid] and count[cid] or 0) + (minmaxs[idx-1]-minmax)
+          count[cid] = (count[cid] and count[cid] or 0) + (minmaxs[pidx]-minmax)
           cand[cid] = count[cid]==2 and true or nil
-          ids[idx], vals[idx], minmaxs[idx], spans[prev_id*2+minmaxs[idx-1]] =
-            ids[idx-1], vals[idx-1], minmaxs[idx-1], idx
+          ids[idx], vals[idx], minmaxs[idx], spans[prev_id*2+minmaxs[pidx]] =
+            ids[pidx], vals[pidx], minmaxs[pidx], idx
           idx -= 1
         end
         ids[idx], vals[idx], minmaxs[idx], spans[id*2+minmax] = id, val, minmax, idx
@@ -60,20 +60,21 @@ function sweep_and_prune()
     end,
     update_body=function(id, box)
       local function update(ids, vals, minmaxs, spans, idx, val)
-        local off, id1, id2, cid
+        local off, id1, id2, cid, nidx
         vals[idx] = val
         while mid(vals[idx-1], val, vals[idx+1])!=val do
           off = vals[idx+1]<val and 1 or -1
-          id1, id2 = ids[idx], ids[idx+off]
+          nidx = idx+off
+          id1, id2 = ids[idx], ids[nidx]
           if id1!=id2 then
             cid = shl(min(id1, id2), 8)+max(id1, id2)
-            count[cid] = (count[cid] and count[cid] or 0) - off*(minmaxs[idx+off]-minmaxs[idx])
+            count[cid] = (count[cid] and count[cid] or 0) - off*(minmaxs[nidx]-minmaxs[idx])
             cand[cid] = count[cid]==2 and true or nil
           end
 
           ids[idx], vals[idx], minmaxs[idx], spans[id1*2+minmaxs[idx]],
-            ids[idx+off], vals[idx+off], minmaxs[idx+off], spans[id2*2+minmaxs[idx+off]] =
-            ids[idx+off], vals[idx+off], minmaxs[idx+off], idx+off,
+            ids[nidx], vals[nidx], minmaxs[nidx], spans[id2*2+minmaxs[nidx]] =
+            ids[nidx], vals[nidx], minmaxs[nidx], nidx,
             ids[idx], vals[idx], minmaxs[idx], idx
           idx += off
         end
