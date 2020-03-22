@@ -97,14 +97,9 @@ function scene(args)
     island, island_vx, island_vy, island_va, island_count, island_sframes =
     1, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
 
-  local function send_message(args) if (listeners[args.id]) listeners[args.id].on_event(args) end
-
-  local function find(id) return (id==island[id]) and id or find(island[id]) end
-
-  local function union(idA, idB)
-    local minI, maxI = minmax(find(idA), find(idB))
-    island[maxI] = minI
-  end
+  function send_message(args) if (listeners[args.id]) listeners[args.id].on_event(args) end
+  function find(id) return id==island[id] and id or find(island[id]) end
+  function union(id1, id2) id2, id1 = minmax(find(id1), find(id2)) island[id1] = id2 end
 
   --[[
   removes a body from the system
@@ -113,7 +108,7 @@ function scene(args)
   ]]
   local function remove_body(id)
     send_message{ id=id, event=0x05 }
-    alive[id], dead[id], geom[id], listeners[id] = nil, true, nil, nil
+    dead[id], alive[id], geom[id], listeners[id] = true
     for cid in pairs(contact_ids) do -- remove contact ids
       if (id==shr(band(cid, 0xff00), 8) or id==band(cid, 0xff)) contact_ids[cid] = nil
     end
@@ -130,7 +125,7 @@ function scene(args)
   local function sleep(id)
     local isle = island[id]
     if awake[isle] then
-      awake[isle], island_sframes[isle] = nil, 0
+      island_sframes[isle], awake[isle] = 0
       for id in pairs(alive) do if (island[id]==isle) send_message{ id=id, event=0x03 } end
     end
   end
@@ -174,11 +169,9 @@ function scene(args)
     return vx[id], vy[id], va[id]
   end
 
-  -- contact solver object pool
+  -- contact solver
   local function contact(id1, id2, nx, ny)
-    local lambdan, lambdat, r, f,
-      jn1, jn2, jn3, jn4, jn5, jn6, jmn, b,
-      jt1, jt2, jt3, jt4, jt5, jt6, jmt =
+    local lambdan, lambdat, r, f, jn3, jn6, jmn, b, jt3, jt6, jmt =
       0, 0, 0.5*(rest[id1]+rest[id2]), sqrt(frict[id1]*frict[id2])
 
     return {
@@ -188,50 +181,41 @@ function scene(args)
           vx[id1], vy[id1], va[id1], vx[id2], vy[id2], va[id2],
           imass[id1], imoi[id1], imass[id2], imoi[id2]
 
-        jn1, jn2, jn3, jn4, jn5, jn6 =
-          nx, ny, rx1*ny-ry1*nx, -nx, -ny, -(rx2*ny-ry2*nx)
+        jn3, jn6 = rx1*ny-ry1*nx, ry2*nx-rx2*ny
 
-        if (jn1*vx1+jn2*vy1+jn3*va1+jn4*vx2+jn5*vy2+jn6*va2>=0) return false
+        if (nx*vx1+ny*vy1+jn3*va1-nx*vx2-ny*vy2+jn6*va2>=0) return false
 
         -- warmstart
         if abs(lambdan)+abs(lambdat)>0 then
           local px, py = nx*lambdan-ny*lambdat, ny*lambdan+nx*lambdat
           vx1, vy1, va1 = apply_impulse(id1, px, py, rx1*py-ry1*px)
-          vx2, vy2, va2 = apply_impulse(id2, -px, -py, -(rx2*py-ry2*px))
+          vx2, vy2, va2 = apply_impulse(id2, -px, -py, ry2*px-rx2*py)
         end
 
-        jmn, b = (jn1*imass1*jn1+jn2*imass1*jn2+jn3*imoi1*jn3+
-                     jn4*imass2*jn4+jn5*imass2*jn5+jn6*imoi2*jn6),
-                  -(beta/dt)*dist+r*min(0, ((vx1-py1*va1)-(vx2-py2*va2))*nx+
-                                           ((vy1+px1*va1)-(vy2-px2*va2))*ny)
+        local nx2, ny2 = nx^2, ny^2
+        jmn, b = nx2*imass1+ny2*imass1+jn3*imoi1*jn3+nx2*imass2+ny2*imass2+jn6*imoi2*jn6,
+                 -(beta/dt)*dist+r*min(0, ((vx1-py1*va1)-(vx2-py2*va2))*nx+
+                                          ((vy1+px1*va1)-(vy2-px2*va2))*ny)
 
-        jt1, jt2, jt3, jt4, jt5, jt6 =
-          -ny, nx, rx1*nx+ry1*ny, ny, -nx, -(rx2*nx+ry2*ny)
-        jmt = (jt1*imass1*jt1+jt2*imass1*jt2+jt3*imoi1*jt3+
-                  jt4*imass2*jt4+jt5*imass2*jt5+jt6*imoi2*jt6)
+        jt3, jt6 = rx1*nx+ry1*ny, -(rx2*nx+ry2*ny)
+        jmt = ny2*imass1+nx2*imass1+jt3*imoi1*jt3+ny2*imass2+nx2*imass2+jt6*imoi2*jt6
 
         return true
       end,
       solve=function()
-        local vx1, vy1, va1, vx2, vy2, va2 =
+        local vx1, vy1, va1, vx2, vy2, va2, deln, delt =
           vx[id1], vy[id1], va[id1], vx[id2], vy[id2], va[id2]
 
-        local deln, delt = -(jn1*vx1+jn2*vy1+jn3*va1+jn4*vx2+jn5*vy2+jn6*va2+b)/jmn,
-                           -(jt1*vx1+jt2*vy1+jt3*va1+jt4*vx2+jt5*vy2+jt6*va2)/jmt
+        deln = max(lambdan-(nx*vx1+ny*vy1+jn3*va1-nx*vx2-ny*vy2+jn6*va2+b)/jmn, 0)-lambdan
+        lambdan += deln
 
-        local tmp = lambdan
-        lambdan = max(lambdan+deln, 0)
-        deln = lambdan-tmp
+        delt = mid(-f*lambdan, lambdat-(-ny*vx1+nx*vy1+jt3*va1+ny*vx2-nx*vy2+jt6*va2)/jmt, f*lambdan)-lambdat
+        lambdat += delt
 
-        local impn = f*lambdan
-        tmp = lambdat
-        lambdat = mid(-impn, tmp+delt, impn)
-        delt = lambdat-tmp
+        apply_impulse(id1, deln*nx-delt*ny, deln*ny+delt*nx, deln*jn3+delt*jt3)
+        apply_impulse(id2, delt*ny-deln*nx, -deln*ny-delt*nx, deln*jn6+delt*jt6)
 
-        apply_impulse(id1, deln*jn1+delt*jt1, deln*jn2+delt*jt2, deln*jn3+delt*jt3)
-        apply_impulse(id2, deln*jn4+delt*jt4, deln*jn5+delt*jt5, deln*jn6+delt*jt6)
-
-        return deln*deln+delt*delt>0x0.001
+        return deln^2+delt^2<0x0.001
       end
     }
   end
@@ -265,10 +249,10 @@ function scene(args)
       if not moi then
         moi = 0
         if mass[id]>0 then
-          local nv, vx, vy = geom[id].num_vertex()
+          local nv, vx, vy = geom[id].numv
           for i=1,nv do
             vx, vy = geom[id].x[i], geom[id].y[i]
-            moi += vx*vx+vy*vy
+            moi += vx^2+vy^2
           end
           moi *= mass[id]/nv
         end
@@ -286,7 +270,7 @@ function scene(args)
         args.listener or nil
 
       geom[id].transform(x[id], y[id], a[id])
-      cmanager.add_body(id, geom[id].aabb())
+      cmanager.add_body(id, geom[id].aabb)
 
       return id
     end,
@@ -300,9 +284,6 @@ function scene(args)
     apply_impulse=apply_impulse,
     update=function(dt) -- update function called once per frame
       dt = dt or 1/stat(7)
-
-      local t0 = stat(1)
-      local t1, t2 = t0
 
       -- apply gravity and initialise islands
       for id in pairs(alive) do
@@ -327,7 +308,7 @@ function scene(args)
             wake(id1) wake(id2)
             if (dynamic[id1] and dynamic[id2]) union(id1, id2)
             cid = shl(id1, 8)+id2+shr(rid, 16)
-            contacts[cid], prev_contacts[cid] = prev_contacts[cid], nil
+            contacts[cid], prev_contacts[cid] = prev_contacts[cid]
             if dist>slop then
               if not contacts[cid] then
                 contacts[cid] = contact(id1, id2, nx, ny)
@@ -356,7 +337,7 @@ function scene(args)
 
       -- solve all constraints
       for i=1,isteps do
-        for j,s in pairs(solvers) do if (not s.solve()) solvers[j] = nil end
+        for j,s in pairs(solvers) do if (s.solve()) solvers[j] = nil end
         if (#solvers==0) break -- if no constraints remain end early
       end
 
@@ -365,22 +346,20 @@ function scene(args)
       for id in pairs(alive) do
         if is_awake(id) then
           local isle = find(id)
-          awake[id] = id==isle and true or nil
-          island[id] = isle
+          awake[id], island[id] = id==isle and true or nil, isle
           x[id] += vx[id]*dt
           y[id] += vy[id]*dt
           a[id] += va[id]*dt
-          island_vx[isle] += vx[id]*vx[id]
-          island_vy[isle] += vy[id]*vy[id]
-          island_va[isle] += va[id]*va[id]
+          island_vx[isle] += vx[id]^2
+          island_vy[isle] += vy[id]^2
+          island_va[isle] += va[id]^2
           island_count[isle] += 1
           vx[id] *= damp
           vy[id] *= damp
           va[id] *= damp
           geom[id].transform(x[id], y[id], a[id])
 
-          if box.overlaps(geom[id].aabb()) then cmanager.update_body(id, geom[id].aabb())
-          else remove_body(id) end
+          if (box.overlaps(geom[id].aabb)) cmanager.update_body(id, geom[id].aabb) else remove_body(id)
         end
       end
 
@@ -395,13 +374,11 @@ function scene(args)
     draw=function(vp)
       for id in pairs(alive) do
         color(island[id]%7+8)
-
         local cx, cy = vp.to_screen(x[id], y[id])
         local upy, upx = cos_sin(a[id])
         upx *= 2 upy *= 2
         line(cx-upx, cy-upy, cx+upx, cy+upy)
         line(cx-upy, cy+upx, cx+upy, cy-upx)
-
         geom[id].draw(vp)
       end
     end
@@ -420,11 +397,11 @@ sx, sy - scale in x/y directions
 ox, oy - offset
 ]]
 function ngon(r, nv, sx, sy, ox, oy)
-  ox, oy, sx, sy = ox or 0, oy or 0, r*(sx or 1), r*(sy or 1)
-  local x, y, angle, da, ca, sa = {}, {}, (nv==4) and 0.25*0x3.243f or 0, -0x6.487e/nv
+  sx, sy, ox, oy = r*(sx or 1), r*(sy or 1), ox or 0, oy or 0
+  local x, y, angle, da, ca, sa = {}, {}, (nv==4) and 0x0.c90c or 0, -0x6.487e/nv
   for i=1,nv do
-    x[i], y[i] = cos_sin(angle)
-    x[i], y[i] = x[i]*sx+ox, y[i]*sy+oy
+    ca, sa = cos_sin(angle)
+    x[i], y[i] = ca*sx+ox, sa*sy+oy
     angle += da
   end
   return { numv=nv, x=x, y=y }
@@ -434,15 +411,14 @@ function triangle(w, h, ox, oy) return ngon(0x1.6109, 3, w/2, h/2, ox, oy) end
 function rectangle(w, h, ox, oy) return ngon(0x1.6109, 4, w/2, h/2, ox, oy) end
 
 function capsule(w, h, nv, ox, oy)
-  if (nv%2==1) nv += 1
+  nv += nv%2
 
   local sphere = ngon(w/2, nv, 1, 1, ox, oy)
-  local numv, sx, sy = sphere.numv, sphere.x, sphere.y
+  local numv, sx, sy, x, y = sphere.numv, sphere.x, sphere.y, {}, {}
 
-  local x, y = {}, {}
-  for i=1,(nv/2+1) do x[#x+1], y[#y+1] = sx[i], sy[i]-h/2 end
+  for i=1,nv/2+1 do x[#x+1], y[#y+1] = sx[i], sy[i]-h/2 end
   x[#x+1], y[#y+1] =  sx[nv/2+1], sy[nv/2+1]+h/2
-  for i=(nv/2+2),nv do x[#x+1], y[#y+1] = sx[i], sy[i]+h/2 end
+  for i=nv/2+2,nv do x[#x+1], y[#y+1] = sx[i], sy[i]+h/2 end
   x[#x+1], y[#y+1] =  sx[1], sy[1]+h/2
 
   return { numv=nv+2, x=x, y=y }
