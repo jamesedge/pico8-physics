@@ -78,12 +78,10 @@ function geometry(numv, vx, vy)
       return id2, dist2, -nx2, -ny2, xA2, yA2, xB2, yB2
     end,
     transform=function(x, y, a)
-      local ca, sa = cos_sin(a)
       box.set()
       for i=1,numv do
-        tvx[i], tvy[i], tnx[i], tny[i] =
-          vx[i]*ca-vy[i]*sa+x, vx[i]*sa+vy[i]*ca+y,
-          ca*nx[i]-sa*ny[i], sa*nx[i]+ca*ny[i]
+        tvx[i], tvy[i] = transform(vx[i], vy[i], x, y, a)
+        tnx[i], tny[i] = transform(nx[i], ny[i], 0, 0, a)
         maxp[i], box.x1, box.y1, box.x2, box.y2 =
           tnx[i]*tvx[i]+tny[i]*tvy[i],
           min(tvx[i], box.x1), min(tvy[i], box.y1),
