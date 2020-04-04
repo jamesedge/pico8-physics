@@ -34,10 +34,8 @@ function joint(scene, id1, x1, y1, id2, x2, y2, beta)
       scene.apply_impulse(id2, -px, -py, -(px2*py-py2*px))
 
       j1, j2, j3, j4, j5, j6, b =
-        2*dx, 2*dy, -2*(dx*py1-dy*px1), -2*dx, -2*dy, 2*(dx*py2-dy*px2),
-        c*beta/dt
-      jm = j1*imass1*j1+j2*imass1*j2+j3*imoi1*j3+
-           j4*imass2*j4+j5*imass2*j5+j6*imoi2*j6
+        2*dx, 2*dy, -2*(dx*py1-dy*px1), -2*dx, -2*dy, 2*(dx*py2-dy*px2), c*beta/dt
+      jm = j1*imass1*j1+j2*imass1*j2+j3*imoi1*j3+j4*imass2*j4+j5*imass2*j5+j6*imoi2*j6
 
       return true
     end,
