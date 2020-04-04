@@ -17,3 +17,9 @@ function minmax(x, y) return min(x, y), max(x, y) end
 
 -- trig function takes angle in radians
 function cos_sin(a) a*=0x0.28be return cos(a), sin(-a) end
+
+-- 2d transform
+function transform(x, y, tx, ty, ta)
+  local ca, sa = cos_sin(ta)
+  return x*ca-y*sa+tx, x*sa+y*ca+ty
+end
