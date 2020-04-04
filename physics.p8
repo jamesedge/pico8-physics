@@ -50,7 +50,7 @@ function viewport(args)
 
   return {
     translate=function(tx, ty)
-      tx/=scale ty/=scale
+      --tx/=scale ty/=scale
       m13, m23 = m11*tx+m12*ty+m13, m21*tx+m22*ty+m23
     end,
     scale=function(s) scale*=s m11*=s m12*=s m21*=s m22*=s end,
@@ -89,17 +89,21 @@ function scene(args)
   args = args or {}
 
   local size = args.size or 10
-  local g, slop, damp, isteps, sframes, beta, cmanager, box, constraints =
+  local g, slop, damp, isteps, sframes, beta, cmanager, box, constraints, forces =
     args.g or -9.8, args.slop or 0x0.08, args.damp or 1, args.isteps or 4, args.sframes or 100, args.beta or 0.2,
-    sweep_and_prune(), aabb(-size, -size, size, size), {}
+    sweep_and_prune(), aabb(-size, -size, size, size), {}, {}
   local nextid, alive, dead, awake, dynamic, x, y, a, vx, vy, va, mass, imass, imoi,
     geom, layer, rest, frict, contact_ids, listeners,
     island, island_vx, island_vy, island_va, island_count, island_sframes =
     1, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
 
-  function send_message(args) if (listeners[args.id]) listeners[args.id].on_event(args) end
-  function find(id) return id==island[id] and id or find(island[id]) end
-  function union(id1, id2) id2, id1 = minmax(find(id1), find(id2)) island[id1] = id2 end
+  local function send_messages(args)
+    foreach(args, function(evt)
+      if (listeners[evt.id]) listeners[evt.id].on_event(evt)
+    end)
+  end
+  local function find(id) return id==island[id] and id or find(island[id]) end
+  local function union(id1, id2) id2, id1 = minmax(find(id1), find(id2)) island[id1] = id2 end
 
   --[[
   removes a body from the system
@@ -107,7 +111,7 @@ function scene(args)
   id - id of the body
   ]]
   local function remove_body(id)
-    send_message{ id=id, event=0x05 }
+    send_messages{ { id=id, event=0x05 } }
     dead[id], alive[id], geom[id], listeners[id] = true
     for cid in pairs(contact_ids) do -- remove contact ids
       if (id==shr(band(cid, 0xff00), 8) or id==band(cid, 0xff)) contact_ids[cid] = nil
@@ -126,7 +130,7 @@ function scene(args)
     local isle = island[id]
     if awake[isle] then
       island_sframes[isle], awake[isle] = 0
-      for id in pairs(alive) do if (island[id]==isle) send_message{ id=id, event=0x03 } end
+      for id in pairs(alive) do if (island[id]==isle) send_messages{ { id=id, event=0x03 } } end
     end
   end
 
@@ -134,7 +138,7 @@ function scene(args)
     local isle = island[id]
     if not awake[isle] and dynamic[isle] then
       awake[isle] = true
-      for id in pairs(alive) do if (island[id]==isle) send_message{ id=id, event=0x04 } end
+      for id in pairs(alive) do if (island[id]==isle) send_messages{ { id=id, event=0x04 } } end
     end
   end
 
@@ -151,7 +155,7 @@ function scene(args)
     px, py = px and px-x[id] or 0, py and py-y[id] or 0
     vx[id] += fx*imass[id]*dt
     vy[id] += fy*imass[id]*dt
-    va[id] += (fx*py-fy*px)*imoi[id]*dt
+    va[id] -= (fx*py-fy*px)*imoi[id]*dt
     return vx[id], vy[id], va[id]
   end
 
@@ -277,13 +281,16 @@ function scene(args)
     remove_body=remove_body,
     position=function(id) return x[id], y[id], a[id] end, -- returns position/angle of a body
     velocity=function(id) return vx[id], vy[id], va[id] end, -- returns velocity of a body
+    mass=function(id) return mass[id] end,
     inv_mass=function(id) return imass[id], imoi[id] end, -- returns inverse mass/inertia of a body
     is_dynamic=function(id) return dynamic[id] end, -- returns true if the body reacts to forces
     add_constraint=function(c) constraints[#constraints+1] = c end,
+    add_force=function(f) forces[#forces+1] = f end,
     apply_force=apply_force,
     apply_impulse=apply_impulse,
     update=function(dt) -- update function called once per frame
       dt = dt or 1/stat(7)
+      local solvers, id1, id2, cid, rid, dist, nx, ny, x1, y1, x2, y2 = {}
 
       -- apply gravity and initialise islands
       for id in pairs(alive) do
@@ -294,11 +301,15 @@ function scene(args)
         end
       end
 
+      -- apply forces
+      foreach(forces, function(f) f.apply(dt) end)
+
+      -- initialise constraints
+      foreach(constraints, function(c)
+        if(c.eval(dt)) solvers[#solvers+1] = c
+      end)
+
       -- compute contacts, create solvers (including warmstarting)
-      local solvers, id1, id2, cid, rid, dist, nx, ny, x1, y1, x2, y2 = {}
-
-      for _,c in pairs(constraints) do if(c.eval(dt)) solvers[#solvers+1] = c end
-
       contacts, prev_contacts = prev_contacts, contacts
       while cmanager.has_more() do
         id1, id2 = cmanager.next()
@@ -314,11 +325,11 @@ function scene(args)
                 contacts[cid] = contact(id1, id2, nx, ny)
                 if not contact_ids[cid] then
                   contact_ids[cid] = true
-                  send_message{ id=id1, event=0x01, cid=cid, body=id2, x=x1, y=y1, nx=nx, ny=ny }
-                  send_message{ id=id2, event=0x01, cid=cid, body=id1, x=x2, y=y2, nx=-nx, ny=-ny }
+                  send_messages{ { id=id1, event=0x01, cid=cid, body=id2, x=x1, y=y1, nx=nx, ny=ny },
+                                 { id=id2, event=0x01, cid=cid, body=id1, x=x2, y=y2, nx=-nx, ny=-ny } }
                 end
               end
-              solvers[#solvers+1] = contacts[cid].eval(dt, dist-slop, x1, y1, x2, y2) and contacts[cid] or nil
+              if (contacts[cid].eval(dt, dist-slop, x1, y1, x2, y2)) solvers[#solvers+1] = contacts[cid]
             end
           end
         end
@@ -329,8 +340,8 @@ function scene(args)
         id1, id2 = shr(band(cid, 0xff00), 8), band(cid, 0xff)
         if is_awake(id1) or is_awake(id2) then
           contact_ids[cid] = nil
-          send_message{ id=id1, cid=cid, event=0x02, body=id2 }
-          send_message{ id=id2, cid=cid, event=0x02, body=id1 }
+          send_messages{ { id=id1, cid=cid, event=0x02, body=id2 },
+                         { id=id2, cid=cid, event=0x02, body=id1 } }
         end
         prev_contacts[cid] = nil
       end
@@ -398,10 +409,10 @@ ox, oy - offset
 ]]
 function ngon(r, nv, sx, sy, ox, oy)
   sx, sy, ox, oy = r*(sx or 1), r*(sy or 1), ox or 0, oy or 0
-  local x, y, angle, da, ca, sa = {}, {}, (nv==4) and 0x0.c90c or 0, -0x6.487e/nv
+  local x, y, angle, da = {}, {}, (nv==4) and 0x0.c90c or 0, -0x6.487e/nv
   for i=1,nv do
-    ca, sa = cos_sin(angle)
-    x[i], y[i] = ca*sx+ox, sa*sy+oy
+    x[i], y[i] = transform(1, 0, ox, oy, angle)
+    x[i] *= sx y[i] *= sy
     angle += da
   end
   return { numv=nv, x=x, y=y }
